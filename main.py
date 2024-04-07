@@ -118,7 +118,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("src_dir")
     if is_debug:
-        args = parser.parse_args(["pgs/src/A8-2.jpg"])
+        args = parser.parse_args(["pgs/cases/count/20240321/C7.jpg"])
     else:
         args = parser.parse_args()
 
@@ -151,9 +151,8 @@ if __name__ == "__main__":
         h_min = 0
         h_max = 179
         s_min = 0
-        s_max = 255
         s_max = 80
-        v_min = 0
+        v_min = 200
         v_max = 255
         lower = np.array([h_min,s_min,v_min])
         upper = np.array([h_max,s_max,v_max])
@@ -167,27 +166,19 @@ if __name__ == "__main__":
         # stats按照面积排序
         resort =stats[:, 4].argsort() 
         stats = stats[resort]
-        # resort_map = dict()
-        # for i, r in enumerate(resort):
-        #     resort_map[i] = -r
-        
-        # labels = resort_map[labels]
-        # valid_indexes_mask = (stats[:, -1] < 100) & (stats[:, -1] > 1)
-        # num_labels = np.sum(valid_indexes_mask)
-        # for i in range(labels.shape[0]):
-        #     for j in range(labels.shape[1]):
-        #         if valid_indexes_mask[labels[i, j]]:
-        #             infer_image_np[i, j] = [0, 0, 255]
-        
-        # infer_image_np[labels != 0] = [0, 0, 255]
         small_count = 0
         big_count = 0
         for s in stats:
             x, y, w, h, area = s
             # 选出符合面积条件的白点
+            # 滤除长条状的目标
             if (w / h > 3 or h / w > 3):
                 continue
+            # 滤除太大的目标
             if w * h / src_image_area > 20000 / (4032 * 3024):
+                continue
+            # 滤除mask面积相对外接矩形占比过小的目标
+            if area / (w * h) < 0.5:
                 continue
             if area / src_image_area < 300 / CALIBRATION_AREA and w * h / src_image_area < 120 / CALIBRATION_AREA:
                 # 小号菌落
