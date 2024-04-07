@@ -8,6 +8,66 @@ import sys
 
 is_debug = sys.gettrace()
 
+# 返回值类型检查，确保返回值是HW的uint8图像或None，避免蛋疼的类型错误
+def assert_HW_0_255_or_None(f):
+    def w(*args, **kwargs):
+        r = f(*args, **kwargs)
+        assert r is None or (len(r.shape) == 2 and r.dtype == np.uint8 and r.min() == 0 and r.max() == 255)
+        return r
+    return w
+
+
+@assert_HW_0_255_or_None
+def filter_medium_region_by_hough_circle(src_image_np, circle_info=None):
+    h, w = src_image_np.shape[:2]
+    dst_h, dst_w = int(384 * h / w), 384
+    scale = w / dst_w
+    # 宽度调整到384，保持横纵比不变
+    src_image_np = cv2.resize(src_image_np, (dst_w, dst_h))
+    # src_image_np = cv2.resize(src_image_np, (w//8, h//8))
+    gray = cv2.cvtColor(src_image_np, cv2.COLOR_BGR2GRAY)
+    gray = cv2.medianBlur(gray, 3)
+    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, dst_h / 2,
+    param1=100, param2=30,
+    minRadius=int(dst_w // 4), maxRadius=int(dst_w // 1.8))
+
+    if circles is None:
+        return None
+    
+    # 只考虑找到的第一个圆
+    cx, cy, r = circles[0, 0]
+    # 放缩回原图尺寸
+    cx, cy, r = int(cx * scale), int(cy * scale), int(r * scale)
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.circle(mask, (cx, cy), r, 255, -1)
+    if circle_info is not None:
+        assert isinstance(circle_info, list) and len(circle_info) == 0
+        circle_info.extend([cx, cy, r])
+    return mask
+
+
+# 通过hsv阈值过滤出培养皿区域
+@assert_HW_0_255_or_None
+def filter_medium_region_by_hsv(src_image_np):
+    src_image_hsv = cv2.cvtColor(src_image_np,cv2.COLOR_BGR2HSV)
+    h_min = 0
+    h_max = 21
+    s_min = 100
+    s_max = 255
+    v_min = 0
+    v_max = 255
+
+    lower = np.array([h_min,s_min,v_min])
+    upper = np.array([h_max,s_max,v_max])
+    mask = cv2.inRange(src_image_hsv,lower,upper).astype(bool)
+    # 保留最大面积的连通域
+    mask = keep_max_area_mask(mask).astype(np.uint8) * 255
+    # 将连通域内的空洞填充，作为培养皿区域
+    kernel = np.ones((51, 51), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    return mask
+
 def keep_greater_than_n_size_mask(mask_np, min_area):
     '''
     计算mask中每个连通域的面积，只保留面积大于min_area的连通域
@@ -58,7 +118,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("src_dir")
     if is_debug:
-        args = parser.parse_args([r"D:\fengyongronglu\Coculture\18A1.jpg"])
+        args = parser.parse_args(["pgs/src/A8-2.jpg"])
     else:
         args = parser.parse_args()
 
@@ -76,23 +136,12 @@ if __name__ == "__main__":
         print(src_image_np.shape)
         src_image_area = src_image_np.shape[0] * src_image_np.shape[1]
         h, w = src_image_np.shape[:2]
-        # 通过hsv阈值过滤出培养皿区域
-        src_image_hsv = cv2.cvtColor(src_image_np,cv2.COLOR_BGR2HSV)
-        h_min = 0
-        h_max = 21
-        s_min = 100
-        s_max = 255
-        v_min = 0
-        v_max = 255
 
-        lower = np.array([h_min,s_min,v_min])
-        upper = np.array([h_max,s_max,v_max])
-        mask = cv2.inRange(src_image_hsv,lower,upper).astype(bool)
-        # 保留最大面积的连通域
-        mask = keep_max_area_mask(mask).astype(np.uint8) * 255
-        # 将连通域内的空洞填充，作为培养皿区域
-        kernel = np.ones((51, 51), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        # 获得培养皿区域mask
+        circle_info = []
+        mask = filter_medium_region_by_hough_circle(src_image_np, circle_info=circle_info)
+        print(circle_info)
+        # mask = filter_medium_region_by_hsv(src_image_np)
 
         infer_image_np = cv2.bitwise_and(src_image_np, src_image_np, mask=mask)
         medium_np = infer_image_np.copy()
@@ -154,6 +203,7 @@ if __name__ == "__main__":
         print(small_count)
         cv2.putText(src_image_np, "small: " + str(small_count), (100, 300), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 255, 0), 5)
         cv2.putText(src_image_np, "big: " + str(big_count), (100, 600), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 255), 5)
+        cv2.circle(src_image_np, (circle_info[0], circle_info[1]), circle_info[2], (255, 0, 255), 6)
         cv2.imwrite(dst_image_path, src_image_np)
         
         if is_debug:
