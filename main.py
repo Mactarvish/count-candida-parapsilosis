@@ -18,25 +18,48 @@ def assert_HW_0_255_or_None(f):
 
 
 @assert_HW_0_255_or_None
-def filter_medium_region_by_hough_circle(src_image_np, circle_info=None):
+def filter_medium_region_by_hough_circle(src_image_np, circle_info=None, color_mask=None):
     h, w = src_image_np.shape[:2]
     dst_h, dst_w = int(384 * h / w), 384
     scale = w / dst_w
     # 宽度调整到384，保持横纵比不变
     src_image_np = cv2.resize(src_image_np, (dst_w, dst_h))
-    # src_image_np = cv2.resize(src_image_np, (w//8, h//8))
     gray = cv2.cvtColor(src_image_np, cv2.COLOR_BGR2GRAY)
     gray = cv2.medianBlur(gray, 3)
-    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, dst_h / 2,
+    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, dst_h / 6,
     param1=100, param2=30,
     minRadius=int(dst_w // 4), maxRadius=int(dst_w // 1.8))
 
     if circles is None:
         return None
     
+    if color_mask is not None:
+        color_mask = cv2.resize(color_mask, (dst_w, dst_h))
+        color_mask[color_mask > 0] = 255
+
     # 只考虑找到的第一个圆
-    cx, cy, r = circles[0, 0]
+    best_cxcyr = None
+    max_iou = 0
+    oor_thr = 20
+    for xyr in circles[0]:
+        cx, cy, r = xyr
+        cx, cy, r = int(cx), int(cy), int(r)
+        # 过滤越界太多的圆
+        if cx - r + oor_thr <= 0 or cy - r + oor_thr <= 0 or \
+           cx + r - oor_thr >= dst_w or cy + r - oor_thr >= dst_h:
+            continue
+        mask = np.zeros((dst_h, dst_w), dtype=np.uint8)
+        cv2.circle(mask, (cx, cy), r, 255, -1)
+        iou = np.sum(mask & color_mask) / np.sum(mask | color_mask)
+        if iou > max_iou:
+            max_iou = iou
+            best_cxcyr = (cx, cy, r)
+
     # 放缩回原图尺寸
+    if best_cxcyr is None:
+        return None
+
+    cx, cy, r = best_cxcyr
     cx, cy, r = int(cx * scale), int(cy * scale), int(r * scale)
     mask = np.zeros((h, w), dtype=np.uint8)
     cv2.circle(mask, (cx, cy), r, 255, -1)
@@ -51,8 +74,8 @@ def filter_medium_region_by_hough_circle(src_image_np, circle_info=None):
 def filter_medium_region_by_hsv(src_image_np):
     src_image_hsv = cv2.cvtColor(src_image_np,cv2.COLOR_BGR2HSV)
     h_min = 0
-    h_max = 21
-    s_min = 100
+    h_max = 40
+    s_min = 50
     s_max = 255
     v_min = 0
     v_max = 255
@@ -118,7 +141,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("src_dir")
     if is_debug:
-        args = parser.parse_args(["pgs/cases/count/20240321/C7.jpg"])
+        args = parser.parse_args(["pgs/dst/0.2-B03.jpg"])
     else:
         args = parser.parse_args()
 
@@ -126,11 +149,13 @@ if __name__ == "__main__":
         src_image_paths = [args.src_dir]
     else:
         src_image_paths = glob.glob(os.path.join(args.src_dir, "**", "*.jpg"), recursive=True)
-
+    f = open("count.txt", 'w')
+    # 获取当前操作系统的路径分隔符
     for src_image_path in tqdm(src_image_paths):
         src_image_name = os.path.basename(src_image_path)
         print(src_image_path)
-        dst_image_path = os.path.join(os.path.dirname(args.src_dir), "dst", src_image_name)
+        dst_image_path = src_image_path.replace(os.path.basename(args.src_dir.rstrip(os.path.sep)), "dst")
+        print(dst_image_path)
         os.makedirs(os.path.dirname(dst_image_path), exist_ok=True)
         src_image_np = cv2.imread(src_image_path).copy()
         print(src_image_np.shape)
@@ -138,16 +163,18 @@ if __name__ == "__main__":
         h, w = src_image_np.shape[:2]
 
         # 获得培养皿区域mask
+        # 先用颜色阈值给出一个培养皿区域proposal
+        color_mask = filter_medium_region_by_hsv(src_image_np)
         circle_info = []
-        mask = filter_medium_region_by_hough_circle(src_image_np, circle_info=circle_info)
+        # 用霍夫圆变换找出圆形培养皿，由于可能有多个结果，取和颜色proposal具有最大交集的那个，从而过滤掉误识
+        mask = filter_medium_region_by_hough_circle(src_image_np, circle_info=circle_info, color_mask=color_mask)
         print(circle_info)
-        # mask = filter_medium_region_by_hsv(src_image_np)
 
         infer_image_np = cv2.bitwise_and(src_image_np, src_image_np, mask=mask)
         medium_np = infer_image_np.copy()
         infer_image_hsv = cv2.cvtColor(infer_image_np,cv2.COLOR_BGR2HSV)
 
-        # 通过饱和度阈值过滤出培养皿中的白点
+        # 通过饱和度阈值和value阈值过滤出培养皿中的白点
         h_min = 0
         h_max = 179
         s_min = 0
@@ -194,6 +221,7 @@ if __name__ == "__main__":
         print(small_count)
         cv2.putText(src_image_np, "small: " + str(small_count), (100, 300), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 255, 0), 5)
         cv2.putText(src_image_np, "big: " + str(big_count), (100, 600), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 255), 5)
+        f.write(src_image_path + " " + str(small_count) + " " + str(big_count) + "\n")
         cv2.circle(src_image_np, (circle_info[0], circle_info[1]), circle_info[2], (255, 0, 255), 6)
         cv2.imwrite(dst_image_path, src_image_np)
         
@@ -204,3 +232,4 @@ if __name__ == "__main__":
             cv2.imshow("count", cv2.resize(src_image_np, show_size))
             cv2.waitKey(0)
             exit(0)
+    f.close()

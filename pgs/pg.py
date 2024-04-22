@@ -13,8 +13,8 @@ def filter_medium_region_by_hough_circle(src_image_np):
     # src_image_np = cv2.resize(src_image_np, (w//8, h//8))
     gray = cv2.cvtColor(src_image_np, cv2.COLOR_BGR2GRAY)
     gray = cv2.medianBlur(gray, 3)
-    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, dst_h / 2,
-    param1=100, param2=30,
+    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 100,
+    param1=100, param2=10,
     minRadius=int(dst_w // 4), maxRadius=int(dst_w // 1.8))
 
     if circles is None:
@@ -27,19 +27,24 @@ def filter_medium_region_by_hough_circle(src_image_np):
     mask = np.zeros((h, w), dtype=np.uint8)
     cv2.circle(mask, (cx, cy), r, 255, -1)
     
-    return mask
+    # return mask
 
     for i in circles[0, :]:
-        center = (i[0], i[1])
+        center = (int(i[0]), int(i[1]))
         # circle center
         cv2.circle(src_image_np, center, 1, (0, 100, 100), 1)
         # circle outline
-        radius = i[2]
+        radius = int(i[2])
         cv2.circle(src_image_np, center, radius, (255, 0, 255), 1)
+    
+    cv2.imshow("detected circles", src_image_np)
+    # cv2.imshow("mask", mask)
+    cv2.waitKey(0)
         
 
 
 src_image_paths = glob.glob(os.path.join("pgs/src/*.jpg"))
+src_image_paths = ["pgs/cases/count/20240321/C7.jpg"]
 for src_image_path in src_image_paths:
     src_image_np = cv2.imread(src_image_path)
 
