@@ -141,12 +141,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("src_dir")
     if is_debug:
-        args = parser.parse_args(["pgs/dst/0.2-B03.jpg"])
+        args = parser.parse_args(["pgs/20240415coculture/0.2-B10.jpg"])
     else:
         args = parser.parse_args()
 
     if os.path.isfile(args.src_dir):
         src_image_paths = [args.src_dir]
+        args.src_dir = os.path.dirname(args.src_dir)
     else:
         src_image_paths = glob.glob(os.path.join(args.src_dir, "**", "*.jpg"), recursive=True)
     f = open("count.txt", 'w')
@@ -178,7 +179,7 @@ if __name__ == "__main__":
         h_min = 0
         h_max = 179
         s_min = 0
-        s_max = 80
+        s_max = 100
         v_min = 200
         v_max = 255
         lower = np.array([h_min,s_min,v_min])
@@ -193,7 +194,9 @@ if __name__ == "__main__":
         # stats按照面积排序
         resort =stats[:, 4].argsort() 
         stats = stats[resort]
+        tiny_count = 0
         small_count = 0
+        small_areas = []
         big_count = 0
         for s in stats:
             x, y, w, h, area = s
@@ -205,22 +208,48 @@ if __name__ == "__main__":
             if w * h / src_image_area > 20000 / (4032 * 3024):
                 continue
             # 滤除mask面积相对外接矩形占比过小的目标
-            if area / (w * h) < 0.5:
-                continue
-            if area / src_image_area < 300 / CALIBRATION_AREA and w * h / src_image_area < 120 / CALIBRATION_AREA:
+            # if area / (w * h) < 0.5:
+                # continue
+            if area / src_image_area < 5 / CALIBRATION_AREA:# and w * h / src_image_area < 120 / CALIBRATION_AREA:
                 # 小号菌落
                 if area > 1 * src_image_area / CALIBRATION_AREA:
                     cv2.rectangle(src_image_np, (x, y), (x + w, y + h), (0, 255, 0), 2)
                     small_count += 1
-            else:
-                # 大号菌落
+                    small_areas.append(area)
+                else:
+                    cv2.rectangle(src_image_np, (x, y), (x + w, y + h), (255, 0, 0), 1)
+                    tiny_count += 1
+        
+        # 统计小菌落平均面积
+        mean_small_area = 0
+        if len(small_areas) > 0:
+            mean_small_area = float(np.mean(small_areas))
+
+        for s in stats:
+            x, y, w, h, area = s
+            # 选出符合面积条件的白点
+            # 滤除长条状的目标
+            if (w / h > 3 or h / w > 3):
+                continue
+            # 滤除太大的目标
+            if w * h / src_image_area > 20000 / (4032 * 3024):
+                continue
+            # 滤除mask面积相对外接矩形占比过小的目标
+            # if area / (w * h) < 0.5:
+                # continue
+            # 大号菌落
+            if not (area / src_image_area < 5 / CALIBRATION_AREA):# and w * h / src_image_area < 120 / CALIBRATION_AREA:
+                count = int(np.round(area / mean_small_area))
                 cv2.rectangle(src_image_np, (x, y), (x + w, y + h), (0, 0, 255), 3)
-                big_count += 1
+                cv2.putText(src_image_np, str(count), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                big_count += count
                 
 
         print(small_count)
-        cv2.putText(src_image_np, "small: " + str(small_count), (100, 300), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 255, 0), 5)
-        cv2.putText(src_image_np, "big: " + str(big_count), (100, 600), cv2.FONT_HERSHEY_SIMPLEX, 5, (0, 0, 255), 5)
+        cv2.putText(src_image_np, "tiny: " + str(tiny_count), (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 0, 0), 5)
+        cv2.putText(src_image_np, "small: " + str(small_count), (100, 300), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+        cv2.putText(src_image_np, "big (multipled by valid area times): " + str(big_count), (100, 500), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 5)
+        cv2.putText(src_image_np, "summary: " + str(tiny_count + small_count + big_count), (100, 700), cv2.FONT_HERSHEY_SIMPLEX, 5, (255, 255, 255), 8)
         f.write(src_image_path + " " + str(small_count) + " " + str(big_count) + "\n")
         cv2.circle(src_image_np, (circle_info[0], circle_info[1]), circle_info[2], (255, 0, 255), 6)
         cv2.imwrite(dst_image_path, src_image_np)
@@ -230,6 +259,8 @@ if __name__ == "__main__":
             cv2.imshow("medium", cv2.resize(medium_np, show_size))
             cv2.imshow("white dot", cv2.resize(white_dot_np, show_size))
             cv2.imshow("count", cv2.resize(src_image_np, show_size))
+            # 三个图拼成一张图
+            cv2.imwrite("pgs/vis_mid.jpg", np.concatenate([medium_np, white_dot_np, src_image_np], axis=1))
             cv2.waitKey(0)
             exit(0)
     f.close()
