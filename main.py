@@ -12,7 +12,7 @@ is_debug = sys.gettrace()
 def assert_HW_0_255_or_None(f):
     def w(*args, **kwargs):
         r = f(*args, **kwargs)
-        assert r is None or (len(r.shape) == 2 and r.dtype == np.uint8 and r.min() == 0 and r.max() == 255)
+        assert r is None or (len(r.shape) == 2 and r.dtype == np.uint8 and r.min() in [0, 255] and r.max() in [0, 255])
         return r
     return w
 
@@ -129,6 +129,9 @@ def keep_max_area_mask(mask_np):
     i_area_pair = sorted(i_area_pair, key=lambda p: p[1], reverse=True)
 
     mask_np = np.zeros(mask_np.shape, dtype=bool)
+    # 只有背景，无有效前景
+    if n == 1:
+        return mask_np
     mask_np[labels == i_area_pair[0][0]] = True
 
     return mask_np
